@@ -110,6 +110,25 @@ tables in a database that already has them.
 
 > **TLS warning** – The auto-generated certificate is self-signed. Accept the browser security warning for the initial setup, then replace it with a trusted certificate (see [TLS](#tls) below).
 
+### docker
+
+`docker/Dockerfile` starts the server with `/data` as its config directory. On
+the first start, the entrypoint writes `etc/nictool.json` for a remote API from
+these environment variables:
+
+| Variable             | Default  |
+| -------------------- | -------- |
+| `NICTOOL_API_HOST`   | `api`    |
+| `NICTOOL_API_PORT`   | `3000`   |
+| `NICTOOL_API_SCHEME` | `http`   |
+| `NICTOOL_CONFIG_DIR` | `/data`  |
+| `NICTOOL_HTTP_PORT`  | `8080`   |
+| `NICTOOL_BIND_HOST`  | hostname |
+
+Set `NICTOOL_TLS=false` to serve plain HTTP. Otherwise the normal certificate
+discovery and generation apply. An existing `etc/nictool.json` is never
+replaced by the entrypoint.
+
 ---
 
 ## Configuration

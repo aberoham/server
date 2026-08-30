@@ -67,21 +67,28 @@ try {
 // TLS – discover existing certs or generate a self-signed one
 // ---------------------------------------------------------------------------
 
+const useTLS = process.env.NICTOOL_TLS?.toLowerCase() !== 'false'
 const osHostname = os.hostname()
 const tlsDir = path.join(configDir, 'etc', 'tls')
 
-const discovered = await discoverTLS(tlsDir, osHostname)
-let tls, host
+let tls = null
+let host = osHostname
 
-if (discovered) {
-  const { hostname: certHost, ...pemMaterial } = discovered
-  tls = pemMaterial
-  host = certHost
+if (useTLS) {
+  const discovered = await discoverTLS(tlsDir, osHostname)
+  if (discovered) {
+    const { hostname: certHost, ...pemMaterial } = discovered
+    tls = pemMaterial
+    host = certHost
+  } else {
+    console.log(`Generating self-signed cert for ${osHostname}`)
+    tls = await generateTLS(tlsDir, osHostname)
+  }
 } else {
-  console.log(`Generating self-signed cert for ${osHostname}`)
-  tls = await generateTLS(tlsDir, osHostname)
-  host = osHostname
+  console.log('TLS disabled by NICTOOL_TLS=false')
 }
+
+const bindHost = process.env.NICTOOL_BIND_HOST || host
 
 // ---------------------------------------------------------------------------
 // NicTool bootstrap config (nictool.json)
@@ -90,13 +97,18 @@ if (discovered) {
 const nicConfig = await readBootstrap(configDir)
 
 // ---------------------------------------------------------------------------
-// Port selection – prefer 443, fall back to 8443
+// Port selection – prefer 443/8443 for HTTPS and 8080 for HTTP
 // ---------------------------------------------------------------------------
 
-const port =
-  (await resolvePort(host, 443)) ??
-  (await resolvePort(host, 8443)) ??
-  (await randomAvailablePort(host))
+let port
+if (useTLS) {
+  port =
+    (await resolvePort(bindHost, 443)) ??
+    (await resolvePort(bindHost, 8443)) ??
+    (await randomAvailablePort(bindHost))
+} else {
+  port = parsePort(process.env.NICTOOL_HTTP_PORT, 8080)
+}
 
 // ---------------------------------------------------------------------------
 // If already configured, skip the configurator and go straight to services
@@ -134,6 +146,7 @@ if (nicConfig?.configured === true) {
     configDir,
     tls,
     host,
+    bindHost,
     port,
     nicConfig,
     apiServer,
@@ -159,6 +172,7 @@ if (nicConfig?.configured === true) {
     configDir,
     tls,
     host,
+    bindHost,
     port,
     nicConfig,
     supervisor,
@@ -441,4 +455,14 @@ function resolvePort(bindHost, preferred) {
     })
     probe.listen(preferred, bindHost)
   })
+}
+
+function parsePort(value, fallback) {
+  if (value === undefined || value === '') return fallback
+  const port = Number(value)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    console.error(`Invalid NICTOOL_HTTP_PORT: ${value}`)
+    process.exit(1)
+  }
+  return port
 }

@@ -38,12 +38,13 @@ const MIME = {
 }
 
 /**
- * Start the NicTool bootstrap configurator over HTTPS.
+ * Start the NicTool server over HTTP or HTTPS.
  *
  * @param {object} opts
  * @param {string} opts.configDir    Absolute path to the NicTool data root.
- * @param {{ cert: string, key: string }} opts.tls  PEM-encoded TLS material.
- * @param {string} opts.host         Hostname the server is bound to.
+ * @param {{ cert: string, key: string }|null} opts.tls  PEM-encoded TLS material.
+ * @param {string} opts.host         Hostname shown in the server URL.
+ * @param {string} [opts.bindHost]   Address to bind; defaults to opts.host.
  * @param {number} opts.port         Port to listen on (443 or 8443).
  * @param {object} [opts.nicConfig]  Parsed nictool.toml contents, or null.
  * @param {object} [opts.apiServer]  Initialized (but not listening) Hapi server for in-process API.
@@ -52,12 +53,13 @@ const MIME = {
  *                                   response has flushed. May set ctx.apiServer.
  * @param {Function} [opts.startApi] Called with (config); resolves { apiServer, apiRemoteUrl, error }.
  * @param {Function} [opts.stopApi]  Called with (ctx) to shut down a locally started API.
- * @returns {Promise<https.Server>}
+ * @returns {Promise<http.Server|https.Server>}
  */
 export async function startServer({
   configDir,
   tls,
   host,
+  bindHost = host,
   port,
   nicConfig = null,
   apiServer = null,
@@ -90,16 +92,20 @@ export async function startServer({
     ctx.storeConfig = (await readApiConfig(configDir).catch(() => null))?.store ?? null
   }
 
-  const server = https.createServer({ cert: tls.cert, key: tls.key }, (req, res) =>
-    handleRequest(req, res, ctx),
-  )
+  const handler = (req, res) => handleRequest(req, res, ctx)
+  const useTLS = Boolean(tls?.cert && tls?.key)
+  const server = useTLS
+    ? https.createServer({ cert: tls.cert, key: tls.key }, handler)
+    : http.createServer(handler)
 
   await new Promise((resolve, reject) => {
     server.once('error', reject)
-    server.listen(port, host, resolve)
+    server.listen(port, bindHost, resolve)
   })
 
-  const url = `https://${host}${port === 443 ? '' : `:${port}`}`
+  const scheme = useTLS ? 'https' : 'http'
+  const defaultPort = useTLS ? 443 : 80
+  const url = `${scheme}://${host}${port === defaultPort ? '' : `:${port}`}`
   console.log(`Configurator: ${url}`)
 
   return server
@@ -532,6 +538,7 @@ function validateConfig(config) {
         then: Joi.number().port().required(),
         otherwise: Joi.number().port().optional(),
       }),
+      scheme: Joi.string().valid('http', 'https').optional(),
     }).required(),
     store: Joi.object({
       type: Joi.string().valid('json', 'toml', 'directory', 'mysql').required(),
